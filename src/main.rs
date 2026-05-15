@@ -16,7 +16,7 @@ fn print_usage() {
   generate-mnemonic [--words N] [-w N]
       CPU 随机 BIP39 助记词；词数 N 默认 12，可选 15 / 18 / 21 / 24
       地址派生（本工具随机模式仅输出词组）：Alloy 默认路径 {}
-  generate-mnemonic [--words N] vanity [--ETH] [--strict|--case-sensitive] --prefix <hex> [--suffix <hex>] [--threads N]
+  generate-mnemonic [--words N] vanity [--ETH] [--strict|--case-sensitive] --prefix <hex> [--suffix <hex>] [--threads N] [--count N]
       暴力搜索：链默认 ETH；默认忽略大小写，加 --strict 则与 EIP-55 地址逐字匹配
       路径 {}
       例: generate-mnemonic --words 24
@@ -62,18 +62,24 @@ fn main() {
             }
         };
         eprintln!(
-            "开始搜索（{} 线程，{} 词），链 {}，路径 {}，大小写: {}（Alloy MnemonicBuilder）……",
+            "开始搜索（{} 线程，{} 词，目标 {} 条匹配），链 {}，路径 {}，大小写: {}（Alloy MnemonicBuilder）……",
             cfg.threads,
             cfg.word_count,
+            cfg.match_count,
             cfg.chain.cli_label(),
             cfg.chain.derivation_path(),
             if cfg.strict_case { "严格" } else { "忽略" }
         );
         eprintln!("提示: 前缀/后缀每多 1 个十六进制字符，期望耗时约增 16 倍；助记词等同私钥，请勿泄露。");
         match vanity::search_vanity_mnemonic(cfg) {
-            Ok((m, addr)) => {
-                println!("address: {addr}");
-                println!("mnemonic: {}", m.to_phrase());
+            Ok(matches) => {
+                for (i, (m, addr)) in matches.iter().enumerate() {
+                    if matches.len() > 1 {
+                        println!("--- #{} ---", i + 1);
+                    }
+                    println!("address: {addr}");
+                    println!("mnemonic: {}", m.to_phrase());
+                }
             }
             Err(e) => {
                 eprintln!("{e}");

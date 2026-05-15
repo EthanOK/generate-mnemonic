@@ -69,6 +69,7 @@ cargo run --release -- vanity --words 24 --prefix f
 | `--prefix` | `-p` | 地址主体十六进制前缀（可带 `0x`）。默认忽略大小写；`--strict` 下与 EIP-55 一致 |
 | `--suffix` | `-s` | 地址主体十六进制后缀（规则同上） |
 | `--threads` | `-j` | 工作线程数；省略时使用 `std::thread::available_parallelism()`，至少为 1 |
+| `--count` | `-n` | 找到多少条匹配后停止；**默认 1**；须为正整数 |
 
 `--ETH` 与 `--eth` 等价。不能重复写两次 `--ETH`。
 
@@ -78,7 +79,7 @@ cargo run --release -- vanity --words 24 --prefix f
 
 ```bash
 # 显式指定 ETH（推荐写在脚本里，后续加其它链时意图清晰）
-cargo run --release -- vanity --ETH --prefix dead
+cargo run --release -- vanity --ETH --prefix dead --count 1
 
 # 省略链开关时仍为 ETH
 cargo run --release -- vanity --prefix dead
@@ -93,7 +94,7 @@ cargo run --release -- vanity --ETH -p 0x00 -s ff -j 8
 cargo run --release -- vanity --strict --prefix 8EfF
 ```
 
-**输出：** 两行——`address:` 与 `mnemonic:`。请妥善保管助记词，等同于私钥。
+**输出：** 每条匹配各输出 `address:` 与 `mnemonic:`；`--count` 大于 1 时带 `--- #k ---` 分段。请妥善保管助记词，等同于私钥。
 
 ## 技术说明
 

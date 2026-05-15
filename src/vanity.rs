@@ -2,7 +2,7 @@
 
 use alloy::signers::local::coins_bip39::{English, Mnemonic};
 use rand::Rng;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -48,16 +48,22 @@ pub struct VanityConfig {
     pub prefix: String,
     pub suffix: String,
     pub threads: usize,
+    /// 找到多少条匹配后停止；默认 1。
+    pub match_count: usize,
 }
 
-pub fn search_vanity_mnemonic(cfg: VanityConfig) -> Result<(Mnemonic<English>, String), String> {
+pub fn search_vanity_mnemonic(
+    cfg: VanityConfig,
+) -> Result<Vec<(Mnemonic<English>, String)>, String> {
     if cfg.prefix.is_empty() && cfg.suffix.is_empty() {
         return Err("至少需要指定 --prefix 或 --suffix 之一".into());
     }
 
+    let match_count = cfg.match_count.max(1);
     let threads = cfg.threads.max(1);
     let stop = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = mpsc::sync_channel(1);
+    let found = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = mpsc::sync_channel(match_count);
 
     let strict_case = cfg.strict_case;
     let word_count = cfg.word_count;
@@ -69,6 +75,7 @@ pub fn search_vanity_mnemonic(cfg: VanityConfig) -> Result<(Mnemonic<English>, S
     thread::scope(|s| {
         for _ in 0..threads {
             let stop = Arc::clone(&stop);
+            let found = Arc::clone(&found);
             let tx = tx.clone();
             let prefix = prefix.clone();
             let suffix = suffix.clone();
@@ -86,13 +93,16 @@ pub fn search_vanity_mnemonic(cfg: VanityConfig) -> Result<(Mnemonic<English>, S
                         };
                         let body = chain.normalize_address_body(&addr, strict_case);
                         if body_matches(&body, &prefix, &suffix) {
-                            if stop
-                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
-                                .is_ok()
-                            {
+                            let idx = found.fetch_add(1, Ordering::SeqCst);
+                            if idx < match_count {
                                 let _ = tx.send((m, addr));
                             }
-                            return;
+                            if idx + 1 >= match_count {
+                                stop.store(true, Ordering::SeqCst);
+                            }
+                            if stop.load(Ordering::Relaxed) {
+                                return;
+                            }
                         }
                     }
                 }
@@ -100,8 +110,14 @@ pub fn search_vanity_mnemonic(cfg: VanityConfig) -> Result<(Mnemonic<English>, S
         }
     });
 
-    rx.recv()
-        .map_err(|_| "搜索线程意外结束（未找到匹配）".to_string())
+    let mut out = Vec::with_capacity(match_count);
+    for _ in 0..match_count {
+        out.push(
+            rx.recv()
+                .map_err(|_| "搜索线程意外结束（未达到目标匹配数）".to_string())?,
+        );
+    }
+    Ok(out)
 }
 
 pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConfig, String> {
@@ -113,6 +129,7 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
     let mut prefix: Option<String> = None;
     let mut suffix: Option<String> = None;
     let mut threads: Option<usize> = None;
+    let mut match_count: Option<usize> = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -150,6 +167,19 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
                 threads = Some(n);
                 i += 2;
             }
+            "--count" | "-n" => {
+                let v = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--count 需要参数".to_string())?;
+                let n: usize = v
+                    .parse()
+                    .map_err(|_| format!("无效匹配数量: {v}"))?;
+                if n < 1 {
+                    return Err("--count / -n 须为至少 1 的正整数".into());
+                }
+                match_count = Some(n);
+                i += 2;
+            }
             other => {
                 return Err(format!("未知参数: {other}"));
             }
@@ -169,5 +199,6 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
         prefix: prefix.unwrap_or_default(),
         suffix: suffix.unwrap_or_default(),
         threads,
+        match_count: match_count.unwrap_or(1),
     })
 }
