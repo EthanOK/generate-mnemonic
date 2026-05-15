@@ -1,0 +1,10 @@
+[package]
+name = "generate-mnemonic"
+version = "0.1.0"
+edition = "2021"
+description = "BIP39 mnemonics + ETH vanity search via Alloy MnemonicBuilder (CPU)."
+
+[dependencies]
+alloy = { version = "2.0.4", default-features = false, features = ["signer-mnemonic"] }
+# 与 alloy → coins-bip39 0.12 使用的 rand 0.8 对齐（Mnemonic::new / new_with_count）
+rand = "0.8"
