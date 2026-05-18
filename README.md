@@ -1,6 +1,11 @@
 # generate-mnemonic
 
-生成 BIP39 英文助记词（**CPU** / `rand`）；支持按 **以太坊地址前缀/后缀** 暴力搜索助记词。地址派生通过 **Alloy** 的 [`MnemonicBuilder`](https://docs.rs/alloy/latest/alloy/signers/local/struct.MnemonicBuilder.html)，默认路径与 MetaMask 首账户一致：`m/44'/60'/0'/0/0`。
+生成 BIP39 英文助记词（**CPU** / `rand`）；支持按 **以太坊** 或 **Solana** 地址前缀/后缀暴力搜索助记词（vanity）。
+
+| 链 | 派生路径 | 实现 |
+|----|----------|------|
+| ETH（默认） | `m/44'/60'/0'/0/0` | Alloy [`MnemonicBuilder`](https://docs.rs/alloy/latest/alloy/signers/local/struct.MnemonicBuilder.html)，与 MetaMask 首账户一致 |
+| SOL | `m/44'/501'/0'/0'` | BIP39 种子 + SLIP-0010 Ed25519（`slip10`），与 Phantom / Solflare 首账户常用路径一致 |
 
 ## 环境要求
 
@@ -55,54 +60,68 @@ cargo run --release -- vanity --words 24 --prefix f
 
 ### Vanity：按链匹配地址前缀或后缀
 
-子命令：`vanity`。当前仅实现 **以太坊（`--ETH`）**，默认与省略链开关时均为 ETH，派生路径 **`m/44'/60'/0'/0/0`**，与 MetaMask 首账户、`MnemonicBuilder` 默认一致。后续可在同一位置增加 `--BTC` 等开关及对应派生与地址格式。
+子命令：`vanity`。通过 **`--ETH`** 或 **`--SOL`** 选择链；**省略链开关时默认为 ETH**。`--ETH` 与 `--SOL` 互斥，不可重复指定。
 
-**大小写：**默认**忽略大小写**（前缀、后缀与地址主体均先转小写再比较）。加 **`--strict`** 或 **`--case-sensitive`** 后改为 **EIP-55 严格匹配**：地址以 Alloy `Display`（校验和）形式参与比较，你输入的前缀/后缀需与该校验和主体的大小写一致。
+**大小写：**默认**忽略大小写**（前缀、后缀与地址主体均先转小写再比较）。
 
-**参数：**
+- **ETH + `--strict` / `--case-sensitive`**：与 **EIP-55** 校验和地址主体逐字匹配；输出亦为 checksummed 形式。
+- **SOL + `--strict`**：与 **Base58** 地址逐字匹配（大小写敏感）。
+
+#### 以太坊（`--ETH`，默认）
 
 | 参数 | 简写 | 说明 |
 |------|------|------|
-| `--ETH` | 无 | 显式选择以太坊（与默认行为相同；便于脚本自描述，并为将来多链互斥预留位置） |
-| `--strict` | 无 | 大小写严格匹配（与 `--case-sensitive` 等价） |
+| `--ETH` | 无 | 显式选择以太坊（与默认相同） |
+| `--strict` | 无 | EIP-55 严格匹配（与 `--case-sensitive` 等价） |
 | `--case-sensitive` | 无 | 同 `--strict` |
-| `--prefix` | `-p` | 地址主体十六进制前缀（可带 `0x`）。默认忽略大小写；`--strict` 下与 EIP-55 一致 |
-| `--suffix` | `-s` | 地址主体十六进制后缀（规则同上） |
-| `--threads` | `-j` | 工作线程数；省略时使用 `std::thread::available_parallelism()`，至少为 1 |
-| `--count` | `-n` | 找到多少条匹配后停止；**默认 1**；须为正整数 |
+| `--prefix` | `-p` | 地址主体**十六进制**前缀（可带 `0x`） |
+| `--suffix` | `-s` | 地址主体**十六进制**后缀 |
+| `--threads` | `-j` | 工作线程数；省略时用 `available_parallelism()`，至少 1 |
+| `--count` | `-n` | 匹配条数，**默认 1**，须 ≥ 1 |
 
-`--ETH` 与 `--eth` 等价。不能重复写两次 `--ETH`。
-
-前缀、后缀各自最长 **40** 个十六进制字符（对应 20 字节地址主体）。至少指定其一。
-
-**示例：**
+`--ETH` 与 `--eth` 等价。前缀、后缀各最长 **40** 个十六进制字符。至少指定 `--prefix` 或 `--suffix` 之一。
 
 ```bash
-# 显式指定 ETH（推荐写在脚本里，后续加其它链时意图清晰）
 cargo run --release -- vanity --ETH --prefix dead --count 1
-
-# 省略链开关时仍为 ETH
-cargo run --release -- vanity --prefix dead
-
-# 后缀 cafe
+cargo run --release -- vanity --prefix dead          # 省略链开关，仍为 ETH
 cargo run --release -- vanity --ETH --suffix cafe
-
-# 前缀 + 后缀，8 线程
 cargo run --release -- vanity --ETH -p 0x00 -s ff -j 8
-
-# 严格大小写（需与 EIP-55 校验和前缀一致；地址输出亦为 checksummed）
-cargo run --release -- vanity --strict --prefix 8EfF
+cargo run --release -- vanity --strict --prefix 8EfF   # EIP-55 严格
 ```
 
-**输出：** 每条匹配各输出 `address:` 与 `mnemonic:`；`--count` 大于 1 时带 `--- #k ---` 分段。请妥善保管助记词，等同于私钥。
+#### Solana（`--SOL`）
+
+| 参数 | 简写 | 说明 |
+|------|------|------|
+| `--SOL` | 无 | 选择 Solana（Base58 地址） |
+| `--strict` | 无 | Base58 严格大小写 |
+| `--prefix` | `-p` | 地址 **Base58** 前缀（字符集不含 `0` / `O` / `I` / `l`） |
+| `--suffix` | `-s` | 地址 **Base58** 后缀 |
+| `--threads` | `-j` | 同 ETH |
+| `--count` | `-n` | 同 ETH |
+
+`--SOL` 与 `--sol` 等价。前缀、后缀各最长 **44** 个 Base58 字符。
+
+```bash
+cargo run --release -- vanity --SOL --prefix So1 --count 1
+cargo run --release -- vanity --SOL --prefix So1 --suffix abc -j 8
+cargo run --release -- vanity --SOL --strict --prefix HuS
+```
+
+#### 输出
+
+每条匹配输出 `address:` 与 `mnemonic:`；`--count` 大于 1 时带 `--- #k ---` 分段。助记词等同于私钥，请妥善保管。
 
 ## 技术说明
 
 - **随机助记词**：BIP39 英文词表，`rand` 线程 RNG；词数由 `--words` 控制。
-- **地址计算**：`alloy::signers::local::MnemonicBuilder` + `coins_bip39::English`，与 `cast wallet address --mnemonic ... --mnemonic-derivation-path "m/44'/60'/0'/0/0"` 一类工具对齐（单元测试用标准 `abandon … about` 向量校验）。
-- **Vanity**：多线程 CPU 反复随机助记词并派生地址，直到匹配；耗时与前后缀长度近似按每字符 **16 倍** 增长。默认大小写不敏感；`--strict` 下使用 EIP-55 checksummed 地址与字面前缀/后缀匹配。
+- **ETH 地址**：`MnemonicBuilder` + `coins_bip39::English`，与 `cast wallet address --mnemonic ... --mnemonic-derivation-path "m/44'/60'/0'/0/0"` 对齐（`abandon … about` 向量单测）。
+- **SOL 地址**：`mnemonic.to_seed` → SLIP-0010 `m/44'/501'/0'/0'` → Ed25519 公钥 → Base58，与 `ed25519-hd-key` + `@solana/web3.js` `Keypair.fromSeed` 对齐（同向量单测）。
+- **Vanity**：多线程 CPU 随机助记词并派生地址直至匹配。耗时近似：ETH 每多 1 个十六进制字符约 **×16**；SOL 每多 1 个 Base58 字符约 **×58**。
 
-## 在代码中使用 Alloy（参考）
+> **路径说明**：Solana CLI 默认 `m/44'/501'` 与浏览器钱包 `m/44'/501'/0'/0'` 不同，导入同一助记词会得到不同地址；本工具 SOL 模式与 Phantom / Solflare 首账户路径一致。
+
+## 在代码中使用 Alloy（ETH 参考）
 
 ```rust
 use alloy::signers::local::{coins_bip39::English, MnemonicBuilder};

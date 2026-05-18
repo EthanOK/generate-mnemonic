@@ -1,6 +1,7 @@
 //! 助记词词数：默认 12，可配置为 BIP39 允许的 12 / 15 / 18 / 21 / 24。
 
-use alloy::signers::local::coins_bip39::{English, Mnemonic, MnemonicError};
+use alloy::signers::local::coins_bip39::{English, Entropy, Mnemonic, MnemonicError};
+use rand::{Rng, RngExt};
 
 pub const DEFAULT_WORD_COUNT: usize = 12;
 
@@ -49,7 +50,40 @@ pub fn peel_word_flags(args: &[String]) -> Result<(usize, Vec<String>), String> 
     Ok((word_count, out))
 }
 
+fn entropy_from_rng(rng: &mut impl Rng, nbytes: usize) -> Result<Entropy, MnemonicError> {
+    match nbytes {
+        16 => {
+            let mut buf = [0u8; 16];
+            rng.fill(&mut buf);
+            Ok(Entropy::Sixteen(buf))
+        }
+        20 => {
+            let mut buf = [0u8; 20];
+            rng.fill(&mut buf);
+            Ok(Entropy::Twenty(buf))
+        }
+        24 => {
+            let mut buf = [0u8; 24];
+            rng.fill(&mut buf);
+            Ok(Entropy::TwentyFour(buf))
+        }
+        28 => {
+            let mut buf = [0u8; 28];
+            rng.fill(&mut buf);
+            Ok(Entropy::TwentyEight(buf))
+        }
+        32 => {
+            let mut buf = [0u8; 32];
+            rng.fill(&mut buf);
+            Ok(Entropy::ThirtyTwo(buf))
+        }
+        n => Err(MnemonicError::InvalidEntropyLength(n)),
+    }
+}
+
 pub fn random_mnemonic(word_count: usize) -> Result<Mnemonic<English>, MnemonicError> {
-    let mut rng = rand::thread_rng();
-    Mnemonic::new_with_count(&mut rng, word_count)
+    let nbytes = entropy_byte_len(word_count).ok_or(MnemonicError::InvalidWordCount(word_count))?;
+    let mut rng = rand::rng();
+    let entropy = entropy_from_rng(&mut rng, nbytes)?;
+    Ok(Mnemonic::new_from_entropy(entropy))
 }

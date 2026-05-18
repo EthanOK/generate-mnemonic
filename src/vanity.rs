@@ -1,16 +1,21 @@
 //! 多线程暴力搜索：随机助记词 → Alloy 派生地址 → 匹配前缀/后缀。
 
 use alloy::signers::local::coins_bip39::{English, Mnemonic};
-use rand::Rng;
+use rand::RngExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 
 use crate::chain::Chain;
-use crate::eth::address_from_mnemonic_at_path;
 
-fn normalize_hex_fragment(s: &str, strict_case: bool) -> Result<String, String> {
+fn is_base58_char(c: char) -> bool {
+    matches!(c,
+        '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z'
+    )
+}
+
+fn normalize_hex_fragment(s: &str, strict_case: bool, max_len: usize) -> Result<String, String> {
     let t = s.trim();
     let t = t.strip_prefix("0x").unwrap_or(t);
     if t.is_empty() {
@@ -19,14 +24,48 @@ fn normalize_hex_fragment(s: &str, strict_case: bool) -> Result<String, String> 
     if !t.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("非十六进制字符: {s:?}"));
     }
-    if t.len() > 40 {
-        return Err("前缀/后缀长度不能超过 40 个十六进制字符（地址主体）".into());
+    if t.len() > max_len {
+        return Err(format!(
+            "前缀/后缀长度不能超过 {max_len} 个十六进制字符（ETH 地址主体）"
+        ));
     }
     Ok(if strict_case {
         t.to_string()
     } else {
         t.to_lowercase()
     })
+}
+
+fn normalize_base58_fragment(s: &str, strict_case: bool, max_len: usize) -> Result<String, String> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Ok(String::new());
+    }
+    if !t.chars().all(is_base58_char) {
+        return Err(format!("非 Base58 字符（Solana 地址不含 0/O/I/l）: {s:?}"));
+    }
+    if t.len() > max_len {
+        return Err(format!(
+            "前缀/后缀长度不能超过 {max_len} 个 Base58 字符（SOL 地址主体）"
+        ));
+    }
+    Ok(if strict_case {
+        t.to_string()
+    } else {
+        t.to_lowercase()
+    })
+}
+
+fn normalize_fragment(
+    chain: Chain,
+    s: &str,
+    strict_case: bool,
+) -> Result<String, String> {
+    let max_len = chain.max_fragment_len();
+    match chain {
+        Chain::Eth => normalize_hex_fragment(s, strict_case, max_len),
+        Chain::Sol => normalize_base58_fragment(s, strict_case, max_len),
+    }
 }
 
 fn body_matches(body: &str, prefix: &str, suffix: &str) -> bool {
@@ -43,7 +82,7 @@ pub struct VanityConfig {
     pub chain: Chain,
     pub word_count: usize,
     /// `false`：前缀/后缀与地址主体均忽略大小写（默认）。
-    /// `true`：与 EIP-55 checksummed 地址主体逐字匹配（大小写敏感）。
+    /// `true`：ETH 为 EIP-55 主体逐字匹配；SOL 为 Base58 逐字匹配（大小写敏感）。
     pub strict_case: bool,
     pub prefix: String,
     pub suffix: String,
@@ -68,7 +107,6 @@ pub fn search_vanity_mnemonic(
     let strict_case = cfg.strict_case;
     let word_count = cfg.word_count;
     let chain = cfg.chain;
-    let path = chain.derivation_path();
     let prefix = cfg.prefix;
     let suffix = cfg.suffix;
 
@@ -80,15 +118,15 @@ pub fn search_vanity_mnemonic(
             let prefix = prefix.clone();
             let suffix = suffix.clone();
             s.spawn(move || {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 while !stop.load(Ordering::Relaxed) {
-                    let batch = rng.gen_range(64usize..256usize);
+                    let batch = rng.random_range(64usize..256usize);
                     for _ in 0..batch {
                         let m = match crate::words::random_mnemonic(word_count) {
                             Ok(m) => m,
                             Err(_) => continue,
                         };
-                        let Ok(addr) = address_from_mnemonic_at_path(&m, path) else {
+                        let Ok(addr) = chain.address_from_mnemonic(&m) else {
                             continue;
                         };
                         let body = chain.normalize_address_body(&addr, strict_case);
@@ -126,8 +164,8 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
         .any(|a| a == "--strict" || a == "--case-sensitive");
 
     let mut chain: Option<Chain> = None;
-    let mut prefix: Option<String> = None;
-    let mut suffix: Option<String> = None;
+    let mut prefix_raw: Option<String> = None;
+    let mut suffix_raw: Option<String> = None;
     let mut threads: Option<usize> = None;
     let mut match_count: Option<usize> = None;
 
@@ -139,7 +177,13 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
             }
             "--ETH" | "--eth" => {
                 if chain.replace(Chain::Eth).is_some() {
-                    return Err("不能重复指定链（--ETH）".into());
+                    return Err("不能重复指定链或同时指定 --ETH 与 --SOL".into());
+                }
+                i += 1;
+            }
+            "--SOL" | "--sol" => {
+                if chain.replace(Chain::Sol).is_some() {
+                    return Err("不能重复指定链或同时指定 --ETH 与 --SOL".into());
                 }
                 i += 1;
             }
@@ -147,14 +191,14 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
                 let v = args
                     .get(i + 1)
                     .ok_or_else(|| "--prefix 需要参数".to_string())?;
-                prefix = Some(normalize_hex_fragment(v, strict_case)?);
+                prefix_raw = Some(v.clone());
                 i += 2;
             }
             "--suffix" | "-s" => {
                 let v = args
                     .get(i + 1)
                     .ok_or_else(|| "--suffix 需要参数".to_string())?;
-                suffix = Some(normalize_hex_fragment(v, strict_case)?);
+                suffix_raw = Some(v.clone());
                 i += 2;
             }
             "--threads" | "-j" => {
@@ -192,12 +236,22 @@ pub fn parse_vanity_cli(args: &[String], word_count: usize) -> Result<VanityConf
             .unwrap_or(4)
     });
 
+    let chain = chain.unwrap_or_default();
+    let prefix = prefix_raw
+        .map(|s| normalize_fragment(chain, &s, strict_case))
+        .transpose()?
+        .unwrap_or_default();
+    let suffix = suffix_raw
+        .map(|s| normalize_fragment(chain, &s, strict_case))
+        .transpose()?
+        .unwrap_or_default();
+
     Ok(VanityConfig {
-        chain: chain.unwrap_or_default(),
+        chain,
         word_count,
         strict_case,
-        prefix: prefix.unwrap_or_default(),
-        suffix: suffix.unwrap_or_default(),
+        prefix,
+        suffix,
         threads,
         match_count: match_count.unwrap_or(1),
     })
