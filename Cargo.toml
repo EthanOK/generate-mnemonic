@@ -2,12 +2,13 @@
 name = "generate-mnemonic"
 version = "0.1.0"
 edition = "2021"
-description = "BIP39 mnemonics + ETH/SOL vanity search (CPU)."
+description = "BIP39 mnemonics + ETH/SOL/BTC vanity search (CPU)."
 
 [dependencies]
 alloy = { version = "2.0.4", default-features = false, features = ["signer-mnemonic"] }
+bitcoin = { version = "0.32", features = ["std"] }
 bs58 = "0.5"
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
-# 助记词熵用 rand 0.10 填充后走 coins-bip39 `new_from_entropy`（避免与 alloy 内 rand 0.8 混用）
+# Mnemonic entropy via rand 0.10 + coins-bip39 `new_from_entropy` (not mixed with alloy's rand 0.8)
 rand = { version = "0.10.1", features = ["thread_rng"] }
 slip10 = "0.4.3"

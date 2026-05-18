@@ -1,5 +1,6 @@
 use alloy::signers::local::coins_bip39::{English, Mnemonic};
 
+mod btc;
 mod chain;
 mod eth;
 mod sol;
@@ -7,29 +8,25 @@ mod vanity;
 mod words;
 
 fn random_mnemonic(word_count: usize) -> Mnemonic<English> {
-    words::random_mnemonic(word_count).expect("word_count 已由 peel 校验")
+    words::random_mnemonic(word_count).expect("word_count validated by peel_word_flags")
 }
 
 fn print_usage() {
     eprintln!(
         "\
-用法:
+Usage:
   generate-mnemonic [--words N] [-w N]
-      CPU 随机 BIP39 助记词；词数 N 默认 12，可选 15 / 18 / 21 / 24
-      地址派生（本工具随机模式仅输出词组）：Alloy 默认路径 {}
-  generate-mnemonic [--words N] vanity [--ETH|--SOL] [--strict|--case-sensitive] --prefix <P> [--suffix <S>] [--threads N] [--count N]
-      暴力搜索：链默认 ETH（--ETH）；--SOL 为 Base58 地址，路径 {}
-      ETH 前缀/后缀为十六进制；SOL 为 Base58（不含 0/O/I/l）。默认忽略大小写，--strict 逐字匹配
-      路径 {}
-      例: generate-mnemonic vanity --ETH --prefix dead
-          generate-mnemonic vanity --SOL --prefix So1 --suffix abc
-          generate-mnemonic vanity --strict --prefix 9858EfFD23
+      Random BIP39 mnemonic on CPU; N defaults to 12, or 15 / 18 / 21 / 24
+  generate-mnemonic [--words N] vanity [--ETH|--SOL|--BTC] [--strict] --prefix <P> [--suffix <S>] [--threads N] [--count N]
+      BTC: native SegWit/Taproot only (bc1…); prefix must start with bc1
+           bc1q… → P2WPKH, bc1p… → Taproot, bc1… → both
+      Examples:
+          generate-mnemonic vanity --BTC --prefix bc1
+          generate-mnemonic vanity --BTC --prefix bc1q
+          generate-mnemonic vanity --ETH --prefix dead
 
-ETH 派生：Alloy MnemonicBuilder；SOL：BIP39 + SLIP-0010 Ed25519。
+ETH: Alloy; SOL: SLIP-0010; BTC: BIP32 via bitcoin crate.
 ",
-        eth::ETH_DEFAULT_PATH,
-        sol::SOL_DEFAULT_PATH,
-        eth::ETH_DEFAULT_PATH
     );
 }
 
@@ -65,21 +62,20 @@ fn main() {
             }
         };
         eprintln!(
-            "开始搜索（{} 线程，{} 词，目标 {} 条匹配），链 {}，路径 {}，大小写: {}……",
+            "Searching ({} threads, {} words, target {} match(es)), {}, path {}, case: {}…",
             cfg.threads,
             cfg.word_count,
             cfg.match_count,
             cfg.chain.cli_label(),
             cfg.chain.derivation_path(),
-            if cfg.strict_case { "严格" } else { "忽略" }
+            if cfg.strict_case { "strict" } else { "ignore" }
         );
         let charset_hint = match cfg.chain {
-            chain::Chain::Eth => "ETH 每多 1 个十六进制字符约 16 倍",
-            chain::Chain::Sol => "SOL 每多 1 个 Base58 字符约 58 倍",
+            chain::Chain::Eth => "~16× per extra hex char (ETH)",
+            chain::Chain::Sol => "~58× per extra Base58 char (SOL)",
+            chain::Chain::Btc(_) => "~32× per extra Bech32 char (BTC); slow (PBKDF2 per try)",
         };
-        eprintln!(
-            "提示: {charset_hint}；助记词等同私钥，请勿泄露。"
-        );
+        eprintln!("Hint: {charset_hint}; mnemonics are secret keys — do not leak.");
         match vanity::search_vanity_mnemonic(cfg) {
             Ok(matches) => {
                 for (i, (m, addr)) in matches.iter().enumerate() {
@@ -98,7 +94,7 @@ fn main() {
         return;
     }
 
-    eprintln!("未知参数: {}", args[0]);
+    eprintln!("Unknown argument: {}", args[0]);
     print_usage();
     std::process::exit(1);
 }

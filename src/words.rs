@@ -1,11 +1,11 @@
-//! 助记词词数：默认 12，可配置为 BIP39 允许的 12 / 15 / 18 / 21 / 24。
+//! Mnemonic word count: default 12; BIP39 allows 12 / 15 / 18 / 21 / 24.
 
 use alloy::signers::local::coins_bip39::{English, Entropy, Mnemonic, MnemonicError};
 use rand::{Rng, RngExt};
 
 pub const DEFAULT_WORD_COUNT: usize = 12;
 
-/// 词数对应的熵字节长度（不含校验位）。
+/// Entropy byte length for a given word count (checksum bits excluded).
 pub const fn entropy_byte_len(word_count: usize) -> Option<usize> {
     match word_count {
         12 => Some(16),
@@ -20,14 +20,13 @@ pub const fn entropy_byte_len(word_count: usize) -> Option<usize> {
 pub fn parse_word_count(s: &str) -> Result<usize, String> {
     let n: usize = s
         .parse()
-        .map_err(|_| format!("无效的 --words 参数: {s:?}"))?;
-    entropy_byte_len(n).ok_or_else(|| {
-        format!("--words 仅支持 12、15、18、21、24（BIP39 标准），收到 {n}")
-    })?;
+        .map_err(|_| format!("invalid --words value: {s:?}"))?;
+    entropy_byte_len(n)
+        .ok_or_else(|| format!("--words must be 12, 15, 18, 21, or 24 (BIP39); got {n}"))?;
     Ok(n)
 }
 
-/// 从 `argv` 中剥离 `--words N` / `-w N`，返回剩余参数与最终词数（以后出现的为准）。
+/// Strip `--words N` / `-w N` from `argv`; later flags win.
 pub fn peel_word_flags(args: &[String]) -> Result<(usize, Vec<String>), String> {
     let mut word_count = DEFAULT_WORD_COUNT;
     let mut out = Vec::with_capacity(args.len());
@@ -37,7 +36,7 @@ pub fn peel_word_flags(args: &[String]) -> Result<(usize, Vec<String>), String> 
             "--words" | "-w" => {
                 let v = args
                     .get(i + 1)
-                    .ok_or_else(|| "--words / -w 需要紧跟词数".to_string())?;
+                    .ok_or_else(|| "--words / -w requires a word count".to_string())?;
                 word_count = parse_word_count(v)?;
                 i += 2;
             }

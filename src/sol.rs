@@ -1,11 +1,9 @@
-//! Solana 地址：BIP39 种子 + SLIP-0010 Ed25519 派生，与 Phantom / Solflare 常用路径一致。
+//! Solana address: BIP39 seed + SLIP-0010 Ed25519 (Phantom / Solflare path).
 
 use alloy::signers::local::coins_bip39::{English, Mnemonic};
 use ed25519_dalek::SigningKey;
 use slip10::{derive_key_from_path, BIP32Path, Curve};
 use std::str::FromStr;
-
-pub use crate::chain::SOL_DEFAULT_PATH;
 
 #[derive(Debug)]
 pub enum SolAddressError {
@@ -15,7 +13,7 @@ pub enum SolAddressError {
 impl std::fmt::Display for SolAddressError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SolAddressError::Derivation(e) => write!(f, "SLIP-0010 派生失败: {e}"),
+            SolAddressError::Derivation(e) => write!(f, "SLIP-0010 derivation failed: {e}"),
         }
     }
 }
@@ -43,12 +41,12 @@ mod tests {
     use super::*;
     use alloy::signers::local::coins_bip39::{English, Mnemonic};
 
-    /// 与 `ed25519-hd-key` + `@solana/web3.js` Keypair.fromSeed 对齐（BIP39 → SLIP-0010）。
+    /// Matches `ed25519-hd-key` + `@solana/web3.js` `Keypair.fromSeed`.
     #[test]
     fn abandon_mnemonic_phantom_path_matches_ed25519_hd() {
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let m: Mnemonic<English> = phrase.parse().unwrap();
-        let addr = address_from_mnemonic_at_path(&m, SOL_DEFAULT_PATH).unwrap();
+        let addr = address_from_mnemonic_at_path(&m, crate::chain::SOL_DEFAULT_PATH).unwrap();
         assert_eq!(addr, "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk");
     }
 }

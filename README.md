@@ -1,127 +1,179 @@
 # generate-mnemonic
 
-生成 BIP39 英文助记词（**CPU** / `rand`）；支持按 **以太坊** 或 **Solana** 地址前缀/后缀暴力搜索助记词（vanity）。
+Multi-threaded CPU tool: generate BIP39 English mnemonics and brute-force vanity mnemonics by **Ethereum / Solana / Bitcoin** address prefix or suffix.
 
-| 链 | 派生路径 | 实现 |
-|----|----------|------|
-| ETH（默认） | `m/44'/60'/0'/0/0` | Alloy [`MnemonicBuilder`](https://docs.rs/alloy/latest/alloy/signers/local/struct.MnemonicBuilder.html)，与 MetaMask 首账户一致 |
-| SOL | `m/44'/501'/0'/0'` | BIP39 种子 + SLIP-0010 Ed25519（`slip10`），与 Phantom / Solflare 首账户常用路径一致 |
+## Supported chains
 
-## 环境要求
+| Chain | CLI | Derivation path | Address format | Prefix/suffix charset | Cost per extra char (approx.) |
+|-------|-----|-----------------|----------------|----------------------|------------------------------|
+| ETH (**default**) | `--ETH` | `m/44'/60'/0'/0/0` | `0x` + hex (EIP-55 output) | Hex, max 40 | ×16 |
+| SOL | `--SOL` | `m/44'/501'/0'/0'` | Base58 | Base58 (no `0`/`O`/`I`/`l`), max 44 | ×58 |
+| BTC | `--BTC` + `bc1…` prefix | BIP84 / BIP86 | Bech32 `bc1q…` / `bc1p…` only | Bech32, max 62 | ×32 |
 
-- Rust 工具链（建议 stable）
+Stack: `alloy` (ETH), `slip10` + Ed25519 (SOL), `bitcoin` BIP32 (BTC). Mnemonic entropy uses **rand 0.10** + `coins-bip39::new_from_entropy`.
 
-## 编译
+`--ETH` / `--SOL` / `--BTC` are **mutually exclusive**. Omitting a chain flag defaults to `--ETH`. Prefix `bc1…` auto-selects BTC when no chain flag is set. BTC only supports **native SegWit / Taproot** (`bc1…`); `--prefix` must start with `bc1`.
+
+## Requirements
+
+- Rust toolchain (stable recommended)
+
+## Build
 
 ```bash
 cd generate-mnemonic
 cargo build --release
 ```
 
-二进制位于 `target/release/generate-mnemonic`（或 `cargo run --release --` 传参）。
+Binary: `target/release/generate-mnemonic` (or `cargo run --release -- …`).
 
-## 命令行用法
-
-安装后可将 `target/release` 加入 `PATH`，或始终通过 `cargo run --release --` 传参。
-
-### 查看帮助
+## Quick start
 
 ```bash
-./target/release/generate-mnemonic --help
-# 或
-cargo run --release -- --help
+# Random 12-word mnemonic
+cargo run --release --
+
+# ETH vanity: address starts with dead
+cargo run --release -- vanity --ETH --prefix dead
+
+# SOL vanity
+cargo run --release -- vanity --SOL --prefix So1 --count 1
+
+# BTC (bc1 only)
+cargo run --release -- vanity --BTC --prefix bc1
+cargo run --release -- vanity --BTC --prefix bc1q -j 8
 ```
 
-### 词数（`--words` / `-w`）
+## CLI
 
-在所有子命令前可写全局词数开关（可出现在参数列表任意位置，会先从 `argv` 中剥离再解析子命令）。**默认 12 词**；可选 BIP39 标准：**12、15、18、21、24**。
+### Help
 
-| 参数 | 简写 | 说明 |
-|------|------|------|
-| `--words N` | `-w N` | 助记词词数；省略时为 12。多次出现时以后者为准 |
+```bash
+cargo run --release -- --help
+# Usage is also printed on invalid args or vanity parse errors
+```
 
-示例：
+### Word count `--words` / `-w`
+
+Global flag; may appear anywhere in `argv` (stripped before subcommand parsing). **Default 12 words**; allowed: **12 / 15 / 18 / 21 / 24**.
 
 ```bash
 cargo run --release -- --words 24
-cargo run --release -- vanity --words 24 --prefix f
+cargo run --release -- vanity --words 24 --SOL --prefix H
 ```
 
-`vanity` 搜索时按该词数随机生成候选助记词（多线程 CPU）。
+### Generate mnemonic only
 
-### 生成随机助记词（仅打印词组）
+| Case | Command |
+|------|---------|
+| Default 12 words | `generate-mnemonic` |
+| Custom count | `generate-mnemonic --words 24` |
 
-| 场景 | 命令 |
-|------|------|
-| 无参：CPU 随机助记词（默认 12 词） | `generate-mnemonic` |
-| 指定词数 | `generate-mnemonic --words 24` |
+Prints one line of space-separated words; **does not** derive an address.
 
-无参时输出一行助记词（空格分词），无地址。
+### Vanity subcommand
 
-### Vanity：按链匹配地址前缀或后缀
+```text
+generate-mnemonic [--words N] vanity [--ETH|--SOL|--BTC]
+    [--strict|--case-sensitive]
+    --prefix <P> [--suffix <S>]
+    [--threads N] [--count N]
+```
 
-子命令：`vanity`。通过 **`--ETH`** 或 **`--SOL`** 选择链；**省略链开关时默认为 ETH**。`--ETH` 与 `--SOL` 互斥，不可重复指定。
+#### Shared options (all chains)
 
-**大小写：**默认**忽略大小写**（前缀、后缀与地址主体均先转小写再比较）。
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--strict` | — | Case-sensitive match (ETH: EIP-55; SOL: Base58; BTC: Bech32) |
+| `--case-sensitive` | — | Same as `--strict` |
+| `--prefix` | `-p` | Address prefix (charset per chain table above) |
+| `--suffix` | `-s` | Address suffix |
+| `--threads` | `-j` | Worker threads; default `available_parallelism()`, min 1 |
+| `--count` | `-n` | Stop after N matches; default **1** |
 
-- **ETH + `--strict` / `--case-sensitive`**：与 **EIP-55** 校验和地址主体逐字匹配；输出亦为 checksummed 形式。
-- **SOL + `--strict`**：与 **Base58** 地址逐字匹配（大小写敏感）。
+At least one of `--prefix` or `--suffix` is required. By default matching is **case-insensitive** (address and fragments lowercased).
 
-#### 以太坊（`--ETH`，默认）
+#### Output format
 
-| 参数 | 简写 | 说明 |
-|------|------|------|
-| `--ETH` | 无 | 显式选择以太坊（与默认相同） |
-| `--strict` | 无 | EIP-55 严格匹配（与 `--case-sensitive` 等价） |
-| `--case-sensitive` | 无 | 同 `--strict` |
-| `--prefix` | `-p` | 地址主体**十六进制**前缀（可带 `0x`） |
-| `--suffix` | `-s` | 地址主体**十六进制**后缀 |
-| `--threads` | `-j` | 工作线程数；省略时用 `available_parallelism()`，至少 1 |
-| `--count` | `-n` | 匹配条数，**默认 1**，须 ≥ 1 |
+```
+address: <address>
+mnemonic: <mnemonic>
+```
 
-`--ETH` 与 `--eth` 等价。前缀、后缀各最长 **40** 个十六进制字符。至少指定 `--prefix` 或 `--suffix` 之一。
+With `--count` > 1, each match is prefixed with `--- #k ---`.
+
+#### Ethereum `--ETH` (default)
+
+- Prefix/suffix apply to the address **body** (hex); optional `0x` is stripped for matching.
+- With `--strict`, fragments must match EIP-55 checksummed form.
 
 ```bash
-cargo run --release -- vanity --ETH --prefix dead --count 1
-cargo run --release -- vanity --prefix dead          # 省略链开关，仍为 ETH
-cargo run --release -- vanity --ETH --suffix cafe
+cargo run --release -- vanity --prefix dead              # same as --ETH
 cargo run --release -- vanity --ETH -p 0x00 -s ff -j 8
-cargo run --release -- vanity --strict --prefix 8EfF   # EIP-55 严格
+cargo run --release -- vanity --strict --prefix 9858EfFD23
 ```
 
-#### Solana（`--SOL`）
-
-| 参数 | 简写 | 说明 |
-|------|------|------|
-| `--SOL` | 无 | 选择 Solana（Base58 地址） |
-| `--strict` | 无 | Base58 严格大小写 |
-| `--prefix` | `-p` | 地址 **Base58** 前缀（字符集不含 `0` / `O` / `I` / `l`） |
-| `--suffix` | `-s` | 地址 **Base58** 后缀 |
-| `--threads` | `-j` | 同 ETH |
-| `--count` | `-n` | 同 ETH |
-
-`--SOL` 与 `--sol` 等价。前缀、后缀各最长 **44** 个 Base58 字符。
+#### Solana `--SOL`
 
 ```bash
-cargo run --release -- vanity --SOL --prefix So1 --count 1
-cargo run --release -- vanity --SOL --prefix So1 --suffix abc -j 8
+cargo run --release -- vanity --SOL --prefix So1
+cargo run --release -- vanity --SOL --prefix So1 --suffix abc
 cargo run --release -- vanity --SOL --strict --prefix HuS
 ```
 
-#### 输出
+#### Bitcoin `--BTC`
 
-每条匹配输出 `address:` 与 `mnemonic:`；`--count` 大于 1 时带 `--- #k ---` 分段。助记词等同于私钥，请妥善保管。
+Only **`bc1…`** addresses (BIP84 P2WPKH `bc1q…`, BIP86 Taproot `bc1p…`). No Legacy (`1…`) or nested SegWit (`3…`). **`--prefix` must start with `bc1`.**
 
-## 技术说明
+| Prefix | Search mode | Path |
+|--------|-------------|------|
+| `bc1…` (not `bc1q` / `bc1p`) | both `bc1q` and `bc1p` per mnemonic | BIP84 + BIP86 |
+| `bc1q…` | P2WPKH only | `m/84'/0'/0'/0/0` |
+| `bc1p…` | Taproot only | `m/86'/0'/0'/0/0` |
 
-- **随机助记词**：BIP39 英文词表，`rand` 线程 RNG；词数由 `--words` 控制。
-- **ETH 地址**：`MnemonicBuilder` + `coins_bip39::English`，与 `cast wallet address --mnemonic ... --mnemonic-derivation-path "m/44'/60'/0'/0/0"` 对齐（`abandon … about` 向量单测）。
-- **SOL 地址**：`mnemonic.to_seed` → SLIP-0010 `m/44'/501'/0'/0'` → Ed25519 公钥 → Base58，与 `ed25519-hd-key` + `@solana/web3.js` `Keypair.fromSeed` 对齐（同向量单测）。
-- **Vanity**：多线程 CPU 随机助记词并派生地址直至匹配。耗时近似：ETH 每多 1 个十六进制字符约 **×16**；SOL 每多 1 个 Base58 字符约 **×58**。
+P2WPKH: prefix `bc1q1…` is **impossible** (5th character cannot be `1`).
 
-> **路径说明**：Solana CLI 默认 `m/44'/501'` 与浏览器钱包 `m/44'/501'/0'/0'` 不同，导入同一助记词会得到不同地址；本工具 SOL 模式与 Phantom / Solflare 首账户路径一致。
+```bash
+cargo run --release -- vanity --BTC --prefix bc1
+cargo run --release -- vanity --BTC --prefix bc1q
+cargo run --release -- vanity --prefix bc1p   # auto-selects BTC Taproot
+```
 
-## 在代码中使用 Alloy（ETH 参考）
+BTC vanity is slow (PBKDF2 per attempt). Progress logs every 5s.
+
+## Test vectors (`abandon … about`, empty BIP39 passphrase)
+
+Use these to verify derivation matches common wallets (`cargo test` covers them):
+
+| Chain | Path | First address |
+|-------|------|---------------|
+| ETH | `m/44'/60'/0'/0/0` | `0x9858EfFD232b4033E47D90003D41EC34EcAeda94` (EIP-55) |
+| SOL | `m/44'/501'/0'/0'` | `HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk` |
+| BTC bc1q | `m/84'/0'/0'/0/0` | `bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu` |
+| BTC bc1p | `m/86'/0'/0'/0/0` | `bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr` |
+
+## Paths vs wallets
+
+| Case | Notes |
+|------|-------|
+| ETH | Matches MetaMask / Alloy `MnemonicBuilder` default first account |
+| SOL | Matches Phantom / Solflare common first path; **Solana CLI** default `m/44'/501'` yields a different address |
+| BTC bc1q | BIP84 P2WPKH — Electrum, BlueWallet, etc. |
+| BTC bc1p | BIP86 Taproot — modern wallets (e.g. Sparrow, some hardware) |
+
+BIP39 passphrase is always the empty string.
+
+## Dependencies
+
+| Crate | Role |
+|-------|------|
+| `alloy` | ETH `MnemonicBuilder` |
+| `slip10` + `ed25519-dalek` | SOL SLIP-0010 derivation |
+| `bitcoin` | BTC BIP32 + P2WPKH encoding |
+| `rand` 0.10 | Mnemonic entropy, vanity batch sizing |
+| `coins-bip39` (via alloy) | BIP39 English wordlist |
+
+## Using Alloy for ETH
 
 ```rust
 use alloy::signers::local::{coins_bip39::English, MnemonicBuilder};
@@ -136,16 +188,16 @@ fn example() -> Result<(), alloy::signers::local::LocalSignerError> {
 }
 ```
 
-随机钱包、自定义词数、密码、`.index(n)` 等见 [Alloy `MnemonicBuilder` 文档](https://docs.rs/alloy-signer-local/latest/alloy_signer_local/struct.MnemonicBuilder.html)。
+See [Alloy `MnemonicBuilder`](https://docs.rs/alloy-signer-local/latest/alloy_signer_local/struct.MnemonicBuilder.html).
 
-## 安全提示
+## Security
 
-- 助记词泄露即资产风险；勿提交到版本库、聊天或日志。
-- Vanity 为暴力搜索，仅用于你理解风险且可控的环境。
+- A mnemonic is equivalent to private keys; never commit it, paste it in chat, or log it.
+- Vanity search is brute force; runtime grows sharply with prefix/suffix length. Use only where you understand the risk.
 
-## 开发与测试
+## Development
 
 ```bash
-cargo test
+cargo test      # ETH / SOL / BTC derivation vectors
 cargo clippy
 ```
